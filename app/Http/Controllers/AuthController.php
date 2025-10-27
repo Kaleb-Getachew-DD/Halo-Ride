@@ -22,7 +22,7 @@ use Illuminate\Validation\Rule;
 class AuthController extends Controller
 {
 
-    // Handle staff registration
+    // Handle driver registration
     public function register(Request $request)
     {
         try {
@@ -34,8 +34,7 @@ class AuthController extends Controller
                 'password'       => 'required|string|min:8|confirmed',
                 'role'           => 'required|in:admin,customer',
                 'address'        => 'sometimes|string',
-                'id_photo_path_front'      => 'required|file|mimes:jpg,jpeg,png|max:2048',
-                'id_photo_path_back'       => 'sometimes|file|mimes:jpg,jpeg,png|max:2048',
+                'driver_license'           => 'sometimes|file|mimes:jpg,jpeg,png,pdf|max:2048',
                 'profile_photo_path'       => 'sometimes|file|mimes:jpg,jpeg,png|max:1024',
             ]);
 
@@ -46,22 +45,36 @@ class AuthController extends Controller
                     'errors'  => $validator->errors()
                 ], 422);
             }
-            
-            if($request->hasFile('id_photo_path_front')) {
-                $file = $request->file('id_photo_path_front');
-                $fileName = time().'_'.$file->getClientOriginalName();
-                $filePath = $file->storeAs('ID_photos_front', $fileName, 'public');
 
-                $url_front = Storage::url($filePath);
+            // Check token validity
+            $cacheKey = 'otp_token:' . $request->token;
+            $cachedPhone = Cache::get($cacheKey);
+
+            if (!$cachedPhone) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid or expired verification token.',
+                    'debug'   => [
+                        'provided_token' => $request->token,
+                        'cache_key'      => $cacheKey,
+                        'cached_value'   => $cachedPhone,
+                        'note'           => 'No cached phone number found for this token (expired or never set).'
+                    ]
+                ], 403);
             }
 
-            if($request->hasFile('id_photo_path_back')) {
-                $file = $request->file('id_photo_path_back');
-                $fileName = time().'_'.$file->getClientOriginalName();
-                $filePath = $file->storeAs('ID_photos_back', $fileName, 'public');
-
-                $url_back = Storage::url($filePath);
+            if ($cachedPhone !== $request->phone) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid or expired verification token.',
+                    'debug'   => [
+                        'provided_phone' => $request->phone,
+                        'cached_phone'   => $cachedPhone,
+                        'note'           => 'Token exists but phone mismatch.'
+                    ]
+                ], 403);
             }
+            Cache::forget($cacheKey);
 
             if ($request->hasFile('profile_photo_path')) {
                 $file = $request->file('profile_photo_path');
@@ -70,6 +83,15 @@ class AuthController extends Controller
 
                 $profile_url = Storage::url($filePath);
             }
+
+            if ($request->hasFile('driver_license')) {
+                $file = $request->file('driver_license');
+                $fileName = time() . '_' . $file->getClientOriginalName();
+                $filePath = $file->storeAs('Driver_License', $fileName, 'public');
+
+                $license_url = Storage::url($filePath);
+            }
+
 
             $roleName = ucfirst($request->role);
             $role = Role::where('name', $roleName)->firstOrFail();
@@ -84,17 +106,11 @@ class AuthController extends Controller
                 'role_id'   => $role->id,
             ]);
 
-            if ($roleName === 'Customer') {
-                Customer::create([
-                    'user_id'            => $user->id,
-                    'id_photo_path_front'      => $url_front ?? null,
-                    'id_photo_path_back'       => $url_back ?? null,
-                    'profile_photo_path' => $profile_url ?? null,
-                    'is_verified'             => true,
-                ]);
-            } elseif ($roleName === 'Driver') {
+            if ($roleName === 'Driver') {
                 Driver::create([
                     'user_id'  => $user->id,
+                    'profile_photo_path' => $profile_url ?? null,
+                    'driver_license' => $license_url ?? null,
                     'job_title'=> 'Driver',
                 ]);
             } else {
@@ -216,7 +232,7 @@ class AuthController extends Controller
                     'id_photo_path_front'      => $path_front ?? null,
                     'id_photo_path_back'       => $path_back ?? null,
                     'profile_photo_path' => $profile_url ?? null,
-                    'is_verified'             => false,
+                    'is_verified'             => true,
                 ]);
 
             return response()->json([
@@ -421,13 +437,29 @@ class AuthController extends Controller
         }
     }
 
-    // Handle backoffice registration separately
-    public function registerBackoffice(Request $request)
+    public function update_driver(Request $request)
     {
         try {
+            // Get authenticated user
+            $user = Auth::user();
+            if (! $user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthenticated.'
+                ], 401);
+            }
+
+            // Validation rules. Unique rules ignore current user id.
             $validator = Validator::make($request->all(), [
-                'username' => 'required|string|unique:backoffices,username',
-                'password'  => 'required|string|min:8|confirmed',
+                'full_name'             => 'sometimes|string|max:255',
+                'username'              => ['sometimes', 'string', Rule::unique('users', 'username')->ignore($user->id)],
+                'email'                 => ['sometimes', 'email', Rule::unique('users', 'email')->ignore($user->id)],
+                'phone'                 => ['sometimes', 'string', Rule::unique('users', 'phone')->ignore($user->id)],
+                'password'              => 'sometimes|string|min:8', // front-end handles confirmation
+                'address'               => 'sometimes|string|nullable',
+                'driver_license'        => 'sometimes|file|mimes:jpg,jpeg,png|max:2048',
+                'profile_photo_path'    => 'sometimes|file|mimes:jpg,jpeg,png|max:1024',
+                'token'                 => 'sometimes|string',
             ]);
 
             if ($validator->fails()) {
@@ -438,25 +470,183 @@ class AuthController extends Controller
                 ], 422);
             }
 
-            $account = Backoffice::create([
-                'password' => Hash::make($request->password), // Automatic hashing via model cast
-                'username'  => $request->username,
-            ]);
+            // If phone is present in request, require token verification (OTP)
+            if ($request->has('phone')) {
+                if (! $request->filled('token')) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Verification token required when updating phone.',
+                    ], 403);
+                }
+
+                $cacheKey = 'otp_token:' . $request->token;
+                $cachedPhone = Cache::get($cacheKey);
+
+                if (! $cachedPhone) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Invalid or expired verification token.',
+                        'debug' => [
+                            'provided_token' => $request->token,
+                            'cache_key'      => $cacheKey,
+                            'cached_value'   => $cachedPhone,
+                            'note'           => 'No cached phone number found for this token (expired or never set).'
+                        ]
+                    ], 403);
+                }
+
+                if ($cachedPhone !== $request->phone) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Invalid or expired verification token.',
+                        'debug' => [
+                            'provided_phone' => $request->phone,
+                            'cached_phone'   => $cachedPhone,
+                            'note'           => 'Token exists but phone mismatch.'
+                        ]
+                    ], 403);
+                }
+
+                // Token OK — remove from cache so it can't be reused
+                Cache::forget($cacheKey);
+            }
+
+            // Start transaction for atomic update
+            DB::beginTransaction();
+
+            // Prepare user attributes to update
+            $userUpdated = false;
+            $userAttributes = [];
+
+            if ($request->filled('full_name')) {
+                $userAttributes['full_name'] = $request->full_name;
+            }
+            if ($request->filled('username')) {
+                $userAttributes['username'] = $request->username;
+            }
+            if ($request->filled('email')) {
+                $userAttributes['email'] = $request->email;
+            }
+            if ($request->filled('phone')) {
+                $userAttributes['phone'] = $request->phone;
+            }
+            if ($request->filled('address')) {
+                $userAttributes['address'] = $request->address;
+            }
+            if ($request->filled('password')) {
+                $userAttributes['password'] = $request->password;
+            }
+
+            if (! empty($userAttributes)) {
+                $user->fill($userAttributes);
+                $user->save();
+                $userUpdated = true;
+            }
+
+            // Ensure driver relation exists
+            $driver = $user->driver;
+            if (! $driver) {
+                $driver = Driver::create(['user_id' => $user->id]);
+            }
+
+            // File handling: store new files, delete old when replaced
+
+            // ID back
+            if ($request->hasFile('driver_license')) {
+                $file      = $request->file('driver_license');
+                $fileName  = time() . '_license_' . $file->getClientOriginalName();
+                $filePath  = $file->storeAs('Driver_License', $fileName, 'private');
+
+                if (!empty($customer->driver_license) && Storage::disk('private')->exists($driver->driver_license)) {
+                    Storage::disk('private')->delete($driver->driver_license);
+                }
+
+                $driver->driver_license = $filePath;
+            }
+
+            // Profile photo (public)
+            if ($request->hasFile('profile_photo_path')) {
+                $file      = $request->file('profile_photo_path');
+                $fileName  = time() . '_profile_' . $file->getClientOriginalName();
+                $filePath  = $file->storeAs('Profile_photos', $fileName, 'public');
+                $profileUrl = Storage::url($filePath);
+
+                // Delete old public profile file if it exists (assuming old stored path contains disk-relative path)
+                if (!empty($driver->profile_photo_path)) {
+                    // try to derive the storage path if previous path was a URL
+                    $oldPath = $driver->profile_photo_path;
+                    // If previous value starts with '/storage' or 'storage', remove leading '/storage' to get disk path
+                    $diskPath = preg_replace('#^/storage/#', '', ltrim($oldPath, '/'));
+                    if (Storage::disk('public')->exists($diskPath)) {
+                        Storage::disk('public')->delete($diskPath);
+                    }
+                }
+                $driver->profile_photo_path = $profileUrl;
+            }
+
+            // Optionally: mark as unverified if phone changed (business decision)
+            // if ($request->filled('phone')) {
+            //     $customer->is_verified = false;
+            // }
+
+            $driver->save();
+
+            DB::commit();
 
             return response()->json([
                 'success' => true,
-                'message' => 'Backoffice account created successfully',
-                'data'    => $account
-            ], 201);
-
+                'message' => 'Profile updated successfully.',
+                'data'    => [
+                    'user'     => $user->fresh()->makeHidden(['password']),
+                    'driver' => $driver->fresh(),
+                ]
+            ], 200);
         } catch (Exception $e) {
+            DB::rollBack();
             return response()->json([
                 'success' => false,
-                'message' => 'Backoffice registration failed',
-                'error'   => $e->getMessage()
+                'message' => 'Profile update failed. Please try again.',
+                'error'   => $e->getMessage(),
             ], 500);
         }
     }
+
+    // Handle backoffice registration separately
+    // public function registerBackoffice(Request $request)
+    // {
+    //     try {
+    //         $validator = Validator::make($request->all(), [
+    //             'username' => 'required|string|unique:backoffices,username',
+    //             'password'  => 'required|string|min:8|confirmed',
+    //         ]);
+
+    //         if ($validator->fails()) {
+    //             return response()->json([
+    //                 'success' => false,
+    //                 'message' => 'Validation errors',
+    //                 'errors'  => $validator->errors()
+    //             ], 422);
+    //         }
+
+    //         $account = Backoffice::create([
+    //             'password' => Hash::make($request->password), // Automatic hashing via model cast
+    //             'username'  => $request->username,
+    //         ]);
+
+    //         return response()->json([
+    //             'success' => true,
+    //             'message' => 'Backoffice account created successfully',
+    //             'data'    => $account
+    //         ], 201);
+
+    //     } catch (Exception $e) {
+    //         return response()->json([
+    //             'success' => false,
+    //             'message' => 'Backoffice registration failed',
+    //             'error'   => $e->getMessage()
+    //         ], 500);
+    //     }
+    // }
 
     // Handle login for staff and backoffice users
     public function login(Request $request)
@@ -672,6 +862,8 @@ class AuthController extends Controller
                 case 'Driver':
                     $driver = Driver::where('user_id', $user->id)->first();
                     if ($driver) {
+                        $userData['driver_license'] = $driver->driver_license;
+                        $userData['profile_photo_path'] = $driver->profile_photo_path;
                         $userData['job_title'] = $driver->job_title;
                     }
                     break;

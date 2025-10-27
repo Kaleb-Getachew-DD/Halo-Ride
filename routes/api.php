@@ -23,11 +23,12 @@ Route::middleware(['auth.jwt'])->group(function () {
     Route::get('/refresh', [AuthController::class, 'refresh']);
     Route::post('/logout', [AuthController::class, 'logout']);
 
-    Route::middleware(['access:Admin,Driver'])->group(function () {
+    Route::middleware(['access:Driver'])->group(function () {
 
         // Admin and Driver routes for Authentication
-        Route::post('/staff/register', [AuthController::class, 'register']);
-        Route::post('/backoffice/register', [AuthController::class, 'registerBackoffice']);
+        Route::post('/driver/register', [AuthController::class, 'register']);
+        Route::post('/update-driver', [AuthController::class, 'update_driver']);
+        // Route::post('/backoffice/register', [AuthController::class, 'registerBackoffice']);
     });
 });
 

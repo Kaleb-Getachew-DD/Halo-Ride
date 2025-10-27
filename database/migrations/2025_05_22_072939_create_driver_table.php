@@ -14,6 +14,8 @@ return new class extends Migration
         Schema::create('driver', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->constrained('users')->onDelete('cascade');
+            $table->string('driver_license')->nullable();
+            $table->string('profile_photo_path')->nullable();
             $table->string('job_title')->nullable();
             $table->boolean('is_verified')->default(true);
             $table->softDeletes();

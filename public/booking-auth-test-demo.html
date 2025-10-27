@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Booking Auth Test Demo</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f7f7f7; }
+        .container { max-width: 400px; margin: 40px auto; background: #fff; padding: 24px; border-radius: 8px; box-shadow: 0 2px 8px #0001; }
+        label { display: block; margin-top: 12px; }
+        input, select { width: 100%; padding: 8px; margin-top: 4px; border: 1px solid #ccc; border-radius: 4px; }
+        button { margin-top: 18px; padding: 10px 20px; background: #1e90ff; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #156fc1; }
+        .error { color: red; margin-top: 10px; }
+        .success { color: green; margin-top: 10px; }
+        pre { background: #eee; padding: 10px; border-radius: 4px; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>Booking Auth Test Demo</h2>
+    <form id="loginForm">
+        <h3>Login</h3>
+        <label>Username or Phone
+            <input type="text" name="username" required>
+        </label>
+        <label>Password
+            <input type="password" name="password" required>
+        </label>
+        <button type="submit">Login</button>
+        <div class="error" id="loginError"></div>
+        <div class="success" id="loginSuccess"></div>
+    </form>
+    <form id="bookingForm" class="hidden">
+        <h3>Book a Room</h3>
+        <label>Hotel ID
+            <input type="number" name="hotel_id" required>
+        </label>
+        <label>Room Type
+            <input type="text" name="room_type" required>
+        </label>
+        <label>Check-in Date
+            <input type="date" name="check_in_date" required>
+        </label>
+        <label>Check-out Date
+            <input type="date" name="check_out_date" required>
+        </label>
+        <label>Number of Guests
+            <input type="number" name="number_of_guests" min="1" required>
+        </label>
+        <label>Payment Method
+            <select name="payment_method">
+                <option value="chapa">Chapa</option>
+                <option value="cash">Cash</option>
+            </select>
+        </label>
+        <button type="submit">Book Now</button>
+        <div class="error" id="bookingError"></div>
+        <div class="success" id="bookingSuccess"></div>
+        <pre id="bookingResponse" style="display:none;"></pre>
+    </form>
+</div>
+<script>
+    // Helper: Show/hide forms
+    function showBookingForm() {
+        document.getElementById('loginForm').classList.add('hidden');
+        document.getElementById('bookingForm').classList.remove('hidden');
+    }
+    function showLoginForm() {
+        document.getElementById('loginForm').classList.remove('hidden');
+        document.getElementById('bookingForm').classList.add('hidden');
+    }
+    // Check if already logged in
+    if (localStorage.getItem('jwt_token')) {
+        showBookingForm();
+    }
+    // Login form handler
+    document.getElementById('loginForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        document.getElementById('loginError').textContent = '';
+        document.getElementById('loginSuccess').textContent = '';
+        const form = e.target;
+        const username = form.username.value;
+        const password = form.password.value;
+        // Try both login endpoints
+        let loginUrl, loginBody;
+        if (/^09|07/.test(username)) {
+            loginUrl = '/api/login/customer';
+            loginBody = { phone: username, password };
+        } else {
+            loginUrl = '/api/login';
+            loginBody = { username, password };
+        }
+        try {
+            const res = await fetch(loginUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                },
+                body: JSON.stringify(loginBody)
+            });
+            const result = await res.json();
+            if (res.ok && result.success && result.token) {
+                localStorage.setItem('jwt_token', result.token);
+                document.getElementById('loginSuccess').textContent = 'Login successful!';
+                showBookingForm();
+            } else {
+                document.getElementById('loginError').textContent = result.message || 'Login failed.';
+            }
+        } catch (err) {
+            document.getElementById('loginError').textContent = 'Network or server error.';
+        }
+    });
+    // Booking form handler
+    document.getElementById('bookingForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        document.getElementById('bookingError').textContent = '';
+        document.getElementById('bookingSuccess').textContent = '';
+        document.getElementById('bookingResponse').style.display = 'none';
+        const form = e.target;
+        const data = {
+            hotel_id: form.hotel_id.value,
+            room_type: form.room_type.value,
+            check_in_date: form.check_in_date.value,
+            check_out_date: form.check_out_date.value,
+            number_of_guests: form.number_of_guests.value,
+            payment_method: form.payment_method.value
+        };
+        try {
+            const res = await fetch('/api/bookings', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'Authorization': 'Bearer ' + localStorage.getItem('jwt_token')
+                },
+                body: JSON.stringify(data)
+            });
+            const result = await res.json();
+            if (res.ok && result.success) {
+                document.getElementById('bookingSuccess').textContent = 'Booking created successfully!';
+                document.getElementById('bookingResponse').textContent = JSON.stringify(result, null, 2);
+                document.getElementById('bookingResponse').style.display = 'block';
+            } else {
+                document.getElementById('bookingError').textContent = result.message || 'Booking failed.';
+                document.getElementById('bookingResponse').textContent = JSON.stringify(result, null, 2);
+                document.getElementById('bookingResponse').style.display = 'block';
+            }
+        } catch (err) {
+            document.getElementById('bookingError').textContent = 'Network or server error.';
+        }
+    });
+</script>
+</body>
+</html> 

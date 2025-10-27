@@ -5,7 +5,7 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Models\User;
 use App\Models\Customer;
-use App\Models\Staff;
+use App\Models\Driver;
 use App\Models\Backoffice;
 use App\Models\Role;
 use Illuminate\Support\Facades\Validator;
@@ -92,10 +92,10 @@ class AuthController extends Controller
                     'profile_photo_path' => $profile_url ?? null,
                     'is_verified'             => true,
                 ]);
-            } elseif ($roleName === 'Admin') {
-                Staff::create([
+            } elseif ($roleName === 'Driver') {
+                Driver::create([
                     'user_id'  => $user->id,
-                    'job_title'=> 'Administrator',
+                    'job_title'=> 'Driver',
                 ]);
             } else {
                 // Rollback user creation if needed
@@ -498,9 +498,9 @@ class AuthController extends Controller
 
             // If the user is a staff member, fetch the job title
             if ($user->role->name === 'Admin' || $user->role->name === 'Driver') {
-                $staff = Staff::where('user_id', $user->id)->first();
-                if ($staff) {
-                    $userData['job_title'] = $staff->job_title;
+                $driver = Driver::where('user_id', $user->id)->first();
+                if ($driver) {
+                    $userData['job_title'] = $driver->job_title;
                 } else {
                     $userData['job_title'] = null;
                 }
@@ -670,9 +670,9 @@ class AuthController extends Controller
                     break;
                 case 'Admin':
                 case 'Driver':
-                    $staff = Staff::where('user_id', $user->id)->first();
-                    if ($staff) {
-                        $userData['job_title'] = $staff->job_title;
+                    $driver = Driver::where('user_id', $user->id)->first();
+                    if ($driver) {
+                        $userData['job_title'] = $driver->job_title;
                     }
                     break;
             }

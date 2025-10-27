@@ -4,16 +4,16 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
-use App\Models\Staff;
+use App\Models\Driver;
 
-class StaffSeeder extends Seeder
+class DriverSeeder extends Seeder
 {
     /**
      * Run the database seeds.
      */
     public function run(): void
     {
-        Staff::create([
+        Driver::create([
             'user_id' => 2,
             'job_title' => 'Receptionist',
             'is_verified' => true,

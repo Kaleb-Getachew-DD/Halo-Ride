@@ -83,11 +83,11 @@ class User extends Authenticatable implements JWTSubject
     }
 
     /**
-     * Relationship: Staff (one-to-one)
+     * Relationship: driver (one-to-one)
      */
-    public function staff()
+    public function driver()
     {
-        return $this->hasOne(Staff::class);
+        return $this->hasOne(Driver::class);
     }
 
     /**
